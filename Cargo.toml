@@ -1,0 +1,30 @@
+[package]
+name = "lap"
+version = "0.1.0"
+authors = ["Stephane Raux <stephaneyfx@gmail.com>"]
+edition = "2021"
+description = "Application launcher for Linux"
+license = "0BSD"
+homepage = "https://github.com/stephaneyfx/lap"
+repository = "https://github.com/stephaneyfx/lap.git"
+keywords = ["application", "launcher"]
+
+[dependencies]
+clap = { version = "4.5.4", features = ["derive"] }
+dirs = "5.0.1"
+freedesktop-desktop-entry = "0.5.2"
+freedesktop-icons = "0.2.6"
+futures = "0.3.30"
+iced = { version = "0.12.1", features = ["advanced", "image", "tokio"] }
+image = "0.25.1"
+notify-rust = "4.11.0"
+resvg = "0.41.0"
+serde = { version = "1.0.200", features = ["derive"] }
+strsim = "0.11.1"
+thiserror = "1.0.59"
+toml = "0.8.12"
+tokio = { version = "1.37.0", features = ["rt-multi-thread", "sync"] }
+tokio-stream = "0.1.15"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+walkdir = "2.5.0"
