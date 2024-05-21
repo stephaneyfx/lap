@@ -596,14 +596,18 @@ fn find_all_icons(
 }
 
 fn find_icon(icon_theme: Option<&str>, name: &str) -> Option<iced::widget::image::Handle> {
-    let search = freedesktop_icons::lookup(name)
-        .with_size(DEFAULT_ICON_SIZE as u16)
-        .force_svg();
-    let search = match icon_theme {
-        Some(theme) => search.with_theme(theme),
-        None => search,
+    let path = match Path::new(name).extension().and_then(|ext| ext.to_str()) {
+        Some("svg") | Some("png") => PathBuf::from(name),
+        _ => {
+            let mut search = freedesktop_icons::lookup(name)
+                .with_size(DEFAULT_ICON_SIZE as u16)
+                .force_svg();
+            if let Some(theme) = icon_theme {
+                search = search.with_theme(theme);
+            }
+            search.find()?
+        }
     };
-    let path = search.find()?;
     let pixels = if path.extension().map_or(false, |ext| ext == "svg") {
         load_svg_icon(&path, DEFAULT_ICON_SIZE)
     } else {
