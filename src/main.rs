@@ -14,6 +14,7 @@ use resvg::{tiny_skia, usvg};
 use serde::Deserialize;
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     collections::{hash_map, HashMap},
     convert::identity,
     env::VarError,
@@ -46,34 +47,49 @@ struct App {
     icons: HashMap<String, Option<iced::widget::image::Handle>>,
     request_icon: Option<mpsc::Sender<String>>,
     selection: usize,
+    max_distance: StrDistance,
 }
 
 impl App {
     fn update_results(&mut self) {
-        let target = self.search_pattern.to_lowercase();
-        let mut matches = self
-            .all_candidates
-            .iter()
-            .enumerate()
-            .map(|(index, c)| {
-                let closest_keyword = c
-                    .keywords
-                    .iter()
-                    .map(|k| (k, StrDistance::new(&k.to_lowercase(), &target)))
-                    .min_by_key(|&(_, d)| d);
-                let name_distance = StrDistance::new(&c.name.to_lowercase(), &target);
-                let (distance, matched_keyword) = match closest_keyword {
-                    Some((k, d)) if d < name_distance => (d, Some(k.clone())),
-                    _ => (name_distance, None),
-                };
-                Suggestion {
+        let target = self.search_pattern.trim().to_lowercase();
+        let matches = if target.is_empty() {
+            self.all_candidates
+                .iter()
+                .enumerate()
+                .map(|(index, _)| Suggestion {
                     index,
-                    matched_keyword,
-                    distance,
-                }
-            })
-            .collect::<Vec<_>>();
-        matches.sort_by_key(|m| m.distance);
+                    matched_keyword: None,
+                    distance: StrDistance(0.0),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            let mut matches = self
+                .all_candidates
+                .iter()
+                .enumerate()
+                .map(|(index, c)| {
+                    let closest_keyword = c
+                        .keywords
+                        .iter()
+                        .map(|k| (k, StrDistance::new(&k.to_lowercase(), &target)))
+                        .min_by_key(|&(_, d)| d);
+                    let name_distance = StrDistance::new(&c.name.to_lowercase(), &target);
+                    let (distance, matched_keyword) = match closest_keyword {
+                        Some((k, d)) if d < name_distance => (d, Some(k.clone())),
+                        _ => (name_distance, None),
+                    };
+                    Suggestion {
+                        index,
+                        matched_keyword,
+                        distance,
+                    }
+                })
+                .filter(|suggestion| suggestion.distance <= self.max_distance)
+                .collect::<Vec<_>>();
+            matches.sort_by_key(|m| m.distance);
+            matches
+        };
         self.suggestions = matches;
         self.selection = 0;
     }
@@ -104,6 +120,7 @@ impl Application for App {
                 icons: Default::default(),
                 request_icon: Some(send_icon_name),
                 selection: 0,
+                max_distance: app_settings.max_distance,
             },
             iced::Command::batch([
                 iced::Command::run(
@@ -325,7 +342,7 @@ enum AppMessage {
     Launch,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct AppSettings {
     #[serde(default)]
@@ -334,6 +351,8 @@ struct AppSettings {
     resizable_window: bool,
     #[serde(default)]
     icon_theme: Option<String>,
+    #[serde(default = "default_max_distance")]
+    max_distance: StrDistance,
 }
 
 impl AppSettings {
@@ -354,6 +373,17 @@ impl AppSettings {
     }
 }
 
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            font_family: None,
+            resizable_window: false,
+            icon_theme: None,
+            max_distance: default_max_distance(),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 enum AppSettingsError {
     #[error("Unknown app config directory")]
@@ -362,6 +392,10 @@ enum AppSettingsError {
     Io(PathBuf, io::Error),
     #[error("Failed to parse {0}: {1}")]
     Parse(PathBuf, toml::de::Error),
+}
+
+const fn default_max_distance() -> StrDistance {
+    StrDistance(0.4)
 }
 
 /// Application launcher
@@ -438,6 +472,8 @@ impl Candidate {
             .into_iter()
             .flatten()
             .flat_map(|s| s.split(';'))
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
             .map(ToOwned::to_owned)
             .collect(),
             command,
@@ -642,11 +678,31 @@ enum LoadIconError {
     OpenSkiaPixmap,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct StrDistance(u16);
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct StrDistance(f64);
 
 impl StrDistance {
     fn new(a: &str, b: &str) -> Self {
-        Self(1000u16.saturating_sub((strsim::jaro_winkler(a, b) * 1000.0) as u16))
+        Self(1.0 - strsim::jaro_winkler(a, b))
+    }
+}
+
+impl PartialEq for StrDistance {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_cmp(&other.0) == Ordering::Equal
+    }
+}
+
+impl Eq for StrDistance {}
+
+impl PartialOrd for StrDistance {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for StrDistance {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.total_cmp(&other.0)
     }
 }

@@ -32,6 +32,11 @@ resizable-window = false
 # Name of the icon theme to use for app icons
 # Default: None
 icon-theme = "Papirus-Dark"
+
+# Maximum string distance between search pattern and suggestion. Suggestions with a greater distance
+# are filtered out. The distance is between 0 and 1.
+# Default: 0.4
+max-distance = 0.4
 ```
 
 # Contribute
