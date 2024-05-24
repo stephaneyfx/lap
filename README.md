@@ -10,10 +10,10 @@ Wayland is supported. X11 should work too, though this has not been tested.
 
 # Usage
 When the GUI has focus, the following controls are available:
-- Enter: Launch selected app.
-- Esc (twice): Exit launcher.
-- Up: Select previous suggestion.
-- Down: Select next suggestion.
+- `Enter`: Launch selected app.
+- `Esc` (twice): Exit launcher.
+- `Up`: Select previous suggestion.
+- `Down`: Select next suggestion.
 
 # Configuration
 `$XDG_CONFIG_HOME/lap/settings.toml` is the configuration file. Available settings are described
@@ -32,6 +32,10 @@ resizable-window = false
 # Name of the icon theme to use for app icons
 # Default: None
 icon-theme = "Papirus-Dark"
+
+# Icon size in pixels
+# Default: 16
+icon-size = 16
 
 # Maximum string distance between search pattern and suggestion. Suggestions with a greater distance
 # are filtered out. The distance is between 0 and 1.

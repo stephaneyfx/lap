@@ -47,7 +47,7 @@ struct App {
     icons: HashMap<String, Option<iced::widget::image::Handle>>,
     request_icon: Option<mpsc::Sender<String>>,
     selection: usize,
-    max_distance: StrDistance,
+    settings: AppSettings,
 }
 
 impl App {
@@ -85,7 +85,7 @@ impl App {
                         distance,
                     }
                 })
-                .filter(|suggestion| suggestion.distance <= self.max_distance)
+                .filter(|suggestion| suggestion.distance <= self.settings.max_distance)
                 .collect::<Vec<_>>();
             matches.sort_by_key(|m| m.distance);
             matches
@@ -108,7 +108,14 @@ impl Application for App {
         let (send_icon, receive_icon) = mpsc::channel(100);
         drop(spawn_blocking({
             let theme = app_settings.icon_theme.clone();
-            move || find_all_icons(theme.as_deref(), receive_icon_name, send_icon)
+            move || {
+                find_all_icons(
+                    theme.as_deref(),
+                    app_settings.icon_size,
+                    receive_icon_name,
+                    send_icon,
+                )
+            }
         }));
         let search_pattern_id = iced::widget::text_input::Id::unique();
         (
@@ -120,7 +127,7 @@ impl Application for App {
                 icons: Default::default(),
                 request_icon: Some(send_icon_name),
                 selection: 0,
-                max_distance: app_settings.max_distance,
+                settings: app_settings,
             },
             iced::Command::batch([
                 iced::Command::run(
@@ -256,8 +263,8 @@ impl Application for App {
                                 .map_or_else(
                                     || {
                                         Element::new(iced::widget::Space::new(
-                                            DEFAULT_ICON_SIZE as f32,
-                                            DEFAULT_ICON_SIZE as f32,
+                                            self.settings.icon_size as f32,
+                                            self.settings.icon_size as f32,
                                         ))
                                     },
                                     |icon| Element::new(iced::widget::image(icon.clone())),
@@ -351,6 +358,8 @@ struct AppSettings {
     resizable_window: bool,
     #[serde(default)]
     icon_theme: Option<String>,
+    #[serde(default = "default_icon_size")]
+    icon_size: u32,
     #[serde(default = "default_max_distance")]
     max_distance: StrDistance,
 }
@@ -379,6 +388,7 @@ impl Default for AppSettings {
             font_family: None,
             resizable_window: false,
             icon_theme: None,
+            icon_size: DEFAULT_ICON_SIZE,
             max_distance: default_max_distance(),
         }
     }
@@ -398,6 +408,10 @@ const fn default_max_distance() -> StrDistance {
     StrDistance(0.4)
 }
 
+const fn default_icon_size() -> u32 {
+    DEFAULT_ICON_SIZE
+}
+
 /// Application launcher
 ///
 /// Command-line arguments have precedence over corresponding values in the configuration file.
@@ -407,6 +421,9 @@ struct AppArgs {
     /// Specify if the window should be resizable
     #[arg(long)]
     resizable: Option<bool>,
+    /// Icon size in pixels
+    #[arg(long)]
+    icon_size: Option<u32>,
 }
 
 fn main() -> iced::Result {
@@ -416,18 +433,24 @@ fn main() -> iced::Result {
         .with_ansi(true)
         .pretty()
         .init();
-    let app_settings = match AppSettings::load() {
+    let mut app_settings = match AppSettings::load() {
         Ok(settings) => settings,
         Err(e) => {
             tracing::error!("{e}");
             Default::default()
         }
     };
+    if let Some(resizable) = args.resizable {
+        app_settings.resizable_window = resizable;
+    }
+    if let Some(size) = args.icon_size {
+        app_settings.icon_size = size;
+    }
     let mut settings = iced::Settings::with_flags(app_settings);
     if let Some(font) = &settings.flags.font_family {
         settings.default_font.family = Family::Name(FONT.get_or_init(|| font.clone()));
     }
-    settings.window.resizable = args.resizable.unwrap_or(settings.flags.resizable_window);
+    settings.window.resizable = settings.flags.resizable_window;
     App::run(settings)
 }
 
@@ -586,21 +609,26 @@ fn find_all_candidates(sender: mpsc::Sender<Candidate>) {
 
 fn find_all_icons(
     icon_theme: Option<&str>,
+    icon_size: u32,
     mut icon_names: mpsc::Receiver<String>,
     icons: mpsc::Sender<(String, iced::widget::image::Handle)>,
 ) {
     std::iter::from_fn(|| icon_names.blocking_recv())
-        .filter_map(|name| find_icon(icon_theme, &name).map(|icon| (name, icon)))
+        .filter_map(|name| find_icon(icon_theme, icon_size, &name).map(|icon| (name, icon)))
         .try_for_each(|named_icon| icons.blocking_send(named_icon))
         .ok();
 }
 
-fn find_icon(icon_theme: Option<&str>, name: &str) -> Option<iced::widget::image::Handle> {
+fn find_icon(
+    icon_theme: Option<&str>,
+    icon_size: u32,
+    name: &str,
+) -> Option<iced::widget::image::Handle> {
     let path = match Path::new(name).extension().and_then(|ext| ext.to_str()) {
         Some("svg") | Some("png") => PathBuf::from(name),
         _ => {
             let mut search = freedesktop_icons::lookup(name)
-                .with_size(DEFAULT_ICON_SIZE as u16)
+                .with_size(icon_size as u16)
                 .force_svg();
             if let Some(theme) = icon_theme {
                 search = search.with_theme(theme);
@@ -609,9 +637,9 @@ fn find_icon(icon_theme: Option<&str>, name: &str) -> Option<iced::widget::image
         }
     };
     let pixels = if path.extension().map_or(false, |ext| ext == "svg") {
-        load_svg_icon(&path, DEFAULT_ICON_SIZE)
+        load_svg_icon(&path, icon_size)
     } else {
-        load_bmp_icon(&path, DEFAULT_ICON_SIZE)
+        load_bmp_icon(&path, icon_size)
     };
     let pixels = match pixels {
         Ok(pixels) => Some(pixels),
@@ -621,9 +649,7 @@ fn find_icon(icon_theme: Option<&str>, name: &str) -> Option<iced::widget::image
         }
     }?;
     Some(iced::widget::image::Handle::from_pixels(
-        DEFAULT_ICON_SIZE,
-        DEFAULT_ICON_SIZE,
-        pixels,
+        icon_size, icon_size, pixels,
     ))
 }
 
