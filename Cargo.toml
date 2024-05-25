@@ -10,6 +10,7 @@ repository = "https://github.com/stephaneyfx/lap.git"
 keywords = ["application", "launcher"]
 
 [dependencies]
+anstyle = "1.0.7"
 clap = { version = "4.5.4", features = ["derive"] }
 dirs = "5.0.1"
 freedesktop-desktop-entry = "0.5.2"

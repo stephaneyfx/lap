@@ -1,6 +1,7 @@
 // Copyright (c) 2024 Stephane Raux. Distributed under the 0BSD license.
 
-use clap::Parser;
+use anstyle::AnsiColor;
+use clap::{parser::ValueSource, ArgAction, ArgMatches, CommandFactory, FromArgMatches, Parser};
 use freedesktop_desktop_entry::DesktopEntry;
 use futures::StreamExt;
 use iced::{
@@ -18,6 +19,7 @@ use std::{
     collections::{hash_map, HashMap},
     convert::identity,
     env::VarError,
+    ffi::OsStr,
     fs,
     future::ready,
     io,
@@ -35,6 +37,8 @@ use walkdir::WalkDir;
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const DEFAULT_ICON_SIZE: u32 = 16;
+const DEFAULT_MAX_DISTANCE: f64 = 0.4;
+const DEFAULT_RESIZABLE: bool = false;
 
 static FONT: OnceLock<String> = OnceLock::new();
 
@@ -353,9 +357,9 @@ enum AppMessage {
 #[serde(rename_all = "kebab-case")]
 struct AppSettings {
     #[serde(default)]
-    font_family: Option<String>,
-    #[serde(default)]
-    resizable_window: bool,
+    font: Option<String>,
+    #[serde(default = "default_resizable")]
+    resizable: bool,
     #[serde(default)]
     icon_theme: Option<String>,
     #[serde(default = "default_icon_size")]
@@ -365,28 +369,21 @@ struct AppSettings {
 }
 
 impl AppSettings {
-    fn load() -> Result<Self, AppSettingsError> {
-        let path = dirs::config_dir().ok_or(AppSettingsError::UnknownConfigDir)?;
-        let path = PathBuf::from_iter([
-            path.as_path(),
-            Path::new(APP_NAME),
-            Path::new("settings.toml"),
-        ]);
-        if !path.exists() {
-            return Ok(Default::default());
-        }
-        toml::from_str(
-            &fs::read_to_string(&path).map_err(|e| AppSettingsError::Io(path.clone(), e))?,
-        )
-        .map_err(|e| AppSettingsError::Parse(path.clone(), e))
+    fn load(path: &Path, must_exist: bool) -> Result<Self, AppSettingsError> {
+        let config = match fs::read_to_string(path) {
+            Ok(config) => Ok(config),
+            Err(e) if !must_exist && e.kind() == io::ErrorKind::NotFound => Ok(Default::default()),
+            Err(e) => Err(AppSettingsError::Io(path.to_owned(), e)),
+        }?;
+        toml::from_str(&config).map_err(|e| AppSettingsError::Parse(path.to_owned(), e))
     }
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            font_family: None,
-            resizable_window: false,
+            font: None,
+            resizable: false,
             icon_theme: None,
             icon_size: DEFAULT_ICON_SIZE,
             max_distance: default_max_distance(),
@@ -396,62 +393,131 @@ impl Default for AppSettings {
 
 #[derive(Debug, Error)]
 enum AppSettingsError {
-    #[error("Unknown app config directory")]
-    UnknownConfigDir,
     #[error("Failed to read {0}: {1}")]
     Io(PathBuf, io::Error),
     #[error("Failed to parse {0}: {1}")]
     Parse(PathBuf, toml::de::Error),
 }
 
+fn default_config_path() -> PathBuf {
+    dirs::config_dir()
+        .map(|p| {
+            PathBuf::from_iter([
+                p.as_os_str(),
+                OsStr::new(APP_NAME),
+                OsStr::new("settings.toml"),
+            ])
+        })
+        .unwrap_or_default()
+}
+
 const fn default_max_distance() -> StrDistance {
-    StrDistance(0.4)
+    StrDistance(DEFAULT_MAX_DISTANCE)
 }
 
 const fn default_icon_size() -> u32 {
     DEFAULT_ICON_SIZE
 }
 
+const fn default_resizable() -> bool {
+    DEFAULT_RESIZABLE
+}
+
+fn terminal_styles() -> clap::builder::Styles {
+    clap::builder::Styles::styled()
+        .header(AnsiColor::Green.on_default().bold())
+        .usage(AnsiColor::Green.on_default().bold())
+        .literal(AnsiColor::Blue.on_default().bold())
+        .placeholder(AnsiColor::Cyan.on_default().bold())
+}
+
 /// Application launcher
 ///
 /// Command-line arguments have precedence over corresponding values in the configuration file.
 #[derive(Debug, Parser)]
-#[command(about, author, version)]
+#[command(about, author, styles(terminal_styles()), version)]
 struct AppArgs {
-    /// Specify if the window should be resizable
+    /// Path to configuration file
+    ///
+    /// If set to an empty string, no configuration file is read.
+    #[arg(long, default_value_os_t = default_config_path())]
+    config: PathBuf,
+    /// Font for GUI
     #[arg(long)]
-    resizable: Option<bool>,
+    font: Option<String>,
+    /// Specify that the window should be resizable
+    ///
+    /// By default it is not resizable. This may cause the window to float if using a tiling window
+    /// manager.
+    #[arg(long)]
+    resizable: bool,
+    /// Specify that the window should not be resizable
+    ///
+    /// By default it is not resizable. This may cause the window to float if using a tiling window
+    /// manager.
+    #[arg(long, action = ArgAction::SetFalse, conflicts_with("resizable"))]
+    no_resizable: (),
+    /// Icon theme name
+    #[arg(long)]
+    icon_theme: Option<String>,
     /// Icon size in pixels
-    #[arg(long)]
-    icon_size: Option<u32>,
+    #[arg(long, default_value_t = DEFAULT_ICON_SIZE)]
+    icon_size: u32,
+    /// Maximum string distance between search pattern and suggestion
+    ///
+    /// Suggestions with a greater distance are filtered out. The distance is in [0, 1].
+    #[arg(long, default_value_t = DEFAULT_MAX_DISTANCE)]
+    max_distance: f64,
 }
 
 fn main() -> iced::Result {
-    let args = AppArgs::parse();
+    let raw_args = AppArgs::command().get_matches();
+    let args = match AppArgs::from_arg_matches(&raw_args) {
+        Ok(args) => args,
+        Err(e) => e.exit(),
+    };
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_ansi(true)
         .pretty()
         .init();
-    let mut app_settings = match AppSettings::load() {
-        Ok(settings) => settings,
-        Err(e) => {
-            tracing::error!("{e}");
-            Default::default()
+    let mut app_settings = if args.config.as_os_str().is_empty() {
+        Default::default()
+    } else {
+        let must_exist = !uses_default(&raw_args, "config");
+        match AppSettings::load(&args.config, must_exist) {
+            Ok(settings) => settings,
+            Err(e) => {
+                tracing::error!("{e}");
+                Default::default()
+            }
         }
     };
-    if let Some(resizable) = args.resizable {
-        app_settings.resizable_window = resizable;
+    if let Some(font) = args.font {
+        app_settings.font = Some(font);
     }
-    if let Some(size) = args.icon_size {
-        app_settings.icon_size = size;
+    if !uses_default(&raw_args, "resizable") || !uses_default(&raw_args, "no_resizable") {
+        app_settings.resizable = args.resizable;
+    }
+    if let Some(theme) = args.icon_theme {
+        app_settings.icon_theme = Some(theme);
+    }
+    if !uses_default(&raw_args, "icon_size") {
+        app_settings.icon_size = args.icon_size;
+    }
+    if !uses_default(&raw_args, "max_distance") {
+        app_settings.max_distance = StrDistance(args.max_distance);
     }
     let mut settings = iced::Settings::with_flags(app_settings);
-    if let Some(font) = &settings.flags.font_family {
+    if let Some(font) = &settings.flags.font {
         settings.default_font.family = Family::Name(FONT.get_or_init(|| font.clone()));
     }
-    settings.window.resizable = settings.flags.resizable_window;
+    settings.window.resizable = settings.flags.resizable;
     App::run(settings)
+}
+
+fn uses_default(raw_args: &ArgMatches, name: &str) -> bool {
+    raw_args.value_source(name) == Some(ValueSource::DefaultValue)
 }
 
 #[derive(Clone, Debug)]

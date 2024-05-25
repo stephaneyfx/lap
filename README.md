@@ -22,12 +22,12 @@ below with example values.
 ```toml
 # Font to use
 # Default: None
-font-family = "Source Sans 3"
+font = "Source Sans 3"
 
 # Whether the window should be resizable.
 # Setting this to false may make the window float if using a tiling window manager.
 # Default: false
-resizable-window = false
+resizable = false
 
 # Name of the icon theme to use for app icons
 # Default: None
@@ -38,7 +38,7 @@ icon-theme = "Papirus-Dark"
 icon-size = 16
 
 # Maximum string distance between search pattern and suggestion. Suggestions with a greater distance
-# are filtered out. The distance is between 0 and 1.
+# are filtered out. The distance is in [0, 1].
 # Default: 0.4
 max-distance = 0.4
 ```
