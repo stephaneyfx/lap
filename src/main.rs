@@ -10,6 +10,7 @@ use iced::{
     widget::{text_input, Column, Row, TextInput},
     Application, Element, Font, Length,
 };
+use itertools::Itertools;
 use notify_rust::Notification;
 use resvg::{tiny_skia, usvg};
 use serde::Deserialize;
@@ -227,7 +228,7 @@ impl Application for App {
                             .body(&format!(
                                 "Failed to start app: {e}\nCommand was {command:?}"
                             ))
-                            .icon("error")
+                            .icon("dialog-error")
                             .show();
                         if let Err(e) = notify_result {
                             tracing::warn!("Failed to send desktop notification: {e}");
@@ -369,13 +370,18 @@ struct AppSettings {
 }
 
 impl AppSettings {
-    fn load(path: &Path, must_exist: bool) -> Result<Self, AppSettingsError> {
+    fn load(path: &Path, must_exist: bool) -> Result<(Self, Vec<String>), AppSettingsError> {
         let config = match fs::read_to_string(path) {
             Ok(config) => Ok(config),
             Err(e) if !must_exist && e.kind() == io::ErrorKind::NotFound => Ok(Default::default()),
             Err(e) => Err(AppSettingsError::Io(path.to_owned(), e)),
         }?;
-        toml::from_str(&config).map_err(|e| AppSettingsError::Parse(path.to_owned(), e))
+        let mut ignored_paths = Vec::new();
+        serde_ignored::deserialize(toml::Deserializer::new(&config), |path| {
+            ignored_paths.push(path.to_string())
+        })
+        .map(|settings| (settings, ignored_paths))
+        .map_err(|e| AppSettingsError::Parse(path.to_owned(), e))
     }
 }
 
@@ -486,7 +492,24 @@ fn main() -> iced::Result {
     } else {
         let must_exist = !uses_default(&raw_args, "config");
         match AppSettings::load(&args.config, must_exist) {
-            Ok(settings) => settings,
+            Ok((settings, ignored_paths)) => {
+                if !ignored_paths.is_empty() {
+                    for p in &ignored_paths {
+                        tracing::warn!("Unknown setting {p}");
+                    }
+                    let notif_body =
+                        format!("Unknown settings:\n{}", ignored_paths.iter().format("\n"));
+                    drop(
+                        Notification::new()
+                            .appname(APP_NAME)
+                            .summary("Unknown settings in configuration")
+                            .body(&notif_body)
+                            .icon("dialog-warning")
+                            .show(),
+                    );
+                }
+                settings
+            }
             Err(e) => {
                 tracing::error!("{e}");
                 Default::default()

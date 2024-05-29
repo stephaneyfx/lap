@@ -18,9 +18,11 @@ freedesktop-icons = "0.2.6"
 futures = "0.3.30"
 iced = { version = "0.12.1", features = ["advanced", "image", "tokio"] }
 image = "0.25.1"
+itertools = "0.13.0"
 notify-rust = "4.11.0"
 resvg = "0.41.0"
 serde = { version = "1.0.200", features = ["derive"] }
+serde_ignored = "0.1.10"
 strsim = "0.11.1"
 thiserror = "1.0.59"
 toml = "0.8.12"
