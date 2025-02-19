@@ -6,7 +6,7 @@ use freedesktop_desktop_entry::DesktopEntry;
 use futures::StreamExt;
 use iced::{
     keyboard::{key::Named, Key},
-    widget::{text_input, Column, Row, TextInput},
+    widget::{scrollable::AbsoluteOffset, text_input, Column, Row, TextInput},
     Element, Font, Length,
 };
 use itertools::Itertools;
@@ -39,6 +39,7 @@ const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const DEFAULT_ICON_SIZE: u32 = 16;
 const DEFAULT_MAX_DISTANCE: f64 = 0.4;
 const DEFAULT_RESIZABLE: bool = false;
+const APP_LIST_SPACING: f32 = 5.0;
 
 static FONT: OnceLock<String> = OnceLock::new();
 
@@ -52,6 +53,8 @@ struct App {
     request_icon: Option<mpsc::Sender<String>>,
     selection: usize,
     settings: AppSettings,
+    app_list_viewport: Option<iced::widget::scrollable::Viewport>,
+    app_list_scroll_id: iced::widget::scrollable::Id,
 }
 
 impl App {
@@ -125,6 +128,8 @@ impl App {
                 request_icon: Some(send_icon_name),
                 selection: 0,
                 settings: app_settings,
+                app_list_viewport: None,
+                app_list_scroll_id: iced::widget::scrollable::Id::unique(),
             },
             iced::Task::batch([
                 iced::Task::run(
@@ -195,7 +200,7 @@ impl App {
                     .selection
                     .checked_sub(1)
                     .unwrap_or_else(|| self.suggestions.len().saturating_sub(1));
-                iced::Task::none()
+                self.scroll_app_list_to_selection()
             }
             AppMessage::NextSuggestion => {
                 self.selection = self
@@ -203,7 +208,7 @@ impl App {
                     .checked_add(1)
                     .and_then(|i| i.checked_rem(self.suggestions.len()))
                     .unwrap_or(0);
-                iced::Task::none()
+                self.scroll_app_list_to_selection()
             }
             AppMessage::Launch => {
                 if let Some(command_options) = self
@@ -229,6 +234,10 @@ impl App {
                 }
                 iced::window::get_latest().and_then(iced::window::close)
             }
+            AppMessage::AppListScrolled(viewport) => {
+                self.app_list_viewport = Some(viewport);
+                iced::Task::none()
+            }
         }
     }
 
@@ -241,7 +250,7 @@ impl App {
             .unwrap_or_default();
         let keyword_font = iced::Font {
             style: iced::font::Style::Italic,
-            ..font.clone()
+            ..font
         };
         Element::new(Column::with_children([
             Element::new(
@@ -282,9 +291,7 @@ impl App {
                                 .map(|k| {
                                     vec![
                                         Element::new(iced::widget::Space::with_width(10)),
-                                        Element::new(
-                                            iced::widget::text(k).font(keyword_font.clone()),
-                                        ),
+                                        Element::new(iced::widget::text(k).font(keyword_font)),
                                     ]
                                 })
                                 .unwrap_or_default();
@@ -315,13 +322,15 @@ impl App {
                             (suggestion.index, row)
                         },
                     ))
-                    .spacing(5),
+                    .spacing(APP_LIST_SPACING),
                 )
+                .id(self.app_list_scroll_id.clone())
                 .direction(iced::widget::scrollable::Direction::Vertical(
                     Default::default(),
                 ))
                 .width(Length::Fill)
-                .height(Length::Fill),
+                .height(Length::Fill)
+                .on_scroll(AppMessage::AppListScrolled),
             ),
         ]))
     }
@@ -337,6 +346,31 @@ impl App {
             Key::Named(Named::ArrowUp) => Some(AppMessage::PrevSuggestion),
             Key::Named(Named::Enter) => Some(AppMessage::Launch),
             _ => None,
+        })
+    }
+
+    fn scroll_app_list_to_selection(&self) -> iced::Task<AppMessage> {
+        if self.all_candidates.is_empty() {
+            return iced::Task::none();
+        }
+        let Some(viewport) = self.app_list_viewport.as_ref() else {
+            return iced::Task::none();
+        };
+        let row_count = self.all_candidates.len();
+        let row_height = (viewport.content_bounds().height
+            - (row_count - 1) as f32 * APP_LIST_SPACING)
+            / row_count as f32;
+        let row_top = (row_height + APP_LIST_SPACING) * self.selection as f32;
+        let offset = viewport.absolute_offset().y;
+        let dy = Some(row_top - offset).filter(|&dy| dy < 0.0).or(Some(
+            row_top + row_height - (offset + viewport.bounds().height),
+        )
+        .filter(|&dy| dy > 0.0));
+        dy.map_or_else(iced::Task::none, |dy| {
+            iced::widget::scrollable::scroll_by(
+                self.app_list_scroll_id.clone(),
+                AbsoluteOffset { x: 0.0, y: dy },
+            )
         })
     }
 }
@@ -355,6 +389,7 @@ enum AppMessage {
     PrevSuggestion,
     NextSuggestion,
     Launch,
+    AppListScrolled(iced::widget::scrollable::Viewport),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -582,7 +617,7 @@ impl Candidate {
             keywords: entry
                 .generic_name::<&str>(&[])
                 .into_iter()
-                .chain(entry.keywords::<&str>(&[]).unwrap_or_default().into_iter())
+                .chain(entry.keywords::<&str>(&[]).unwrap_or_default())
                 .chain(
                     entry
                         .categories()
@@ -680,10 +715,7 @@ fn find_all_candidates(sender: mpsc::Sender<Candidate>) {
         })
         .filter(|(_, entry)| {
             !entry.file_type().is_dir()
-                && entry
-                    .path()
-                    .extension()
-                    .map_or(false, |ext| ext == "desktop")
+                && entry.path().extension().is_some_and(|ext| ext == "desktop")
         })
         .filter_map(
             |(priority, entry)| match Candidate::read(entry.path(), priority) {
@@ -729,7 +761,7 @@ fn find_icon(
             search.find()?
         }
     };
-    let pixels = if path.extension().map_or(false, |ext| ext == "svg") {
+    let pixels = if path.extension().is_some_and(|ext| ext == "svg") {
         load_svg_icon(&path, icon_size)
     } else {
         load_bmp_icon(&path, icon_size)
