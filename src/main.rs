@@ -233,6 +233,16 @@ impl App {
     }
 
     fn view(&self) -> iced::Element<'_, AppMessage, iced::Theme, iced::Renderer> {
+        let font = self
+            .settings
+            .font
+            .as_ref()
+            .map(|_| iced::Font::with_name(FONT.get().unwrap()))
+            .unwrap_or_default();
+        let keyword_font = iced::Font {
+            style: iced::font::Style::Italic,
+            ..font.clone()
+        };
         Element::new(Column::with_children([
             Element::new(
                 TextInput::new("App to search for", &self.search_pattern)
@@ -273,8 +283,7 @@ impl App {
                                     vec![
                                         Element::new(iced::widget::Space::with_width(10)),
                                         Element::new(
-                                            iced::widget::text(k)
-                                                .color(iced::Color::from_rgb(0.5, 0.5, 0.5)),
+                                            iced::widget::text(k).font(keyword_font.clone()),
                                         ),
                                     ]
                                 })
@@ -293,11 +302,12 @@ impl App {
                             );
                             if self.selection == i {
                                 row = iced::widget::container(row)
-                                    .style(|_| {
-                                        iced::widget::container::background(
-                                            iced::Background::Color(iced::Color::from_rgb(
-                                                0.18, 0.31, 0.31,
-                                            )),
+                                    .style(|theme: &iced::Theme| iced::widget::container::Style {
+                                        text_color: Some(
+                                            theme.extended_palette().primary.strong.text,
+                                        ),
+                                        ..iced::widget::container::background(
+                                            theme.extended_palette().primary.strong.color,
                                         )
                                     })
                                     .into();
