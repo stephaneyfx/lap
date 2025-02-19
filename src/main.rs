@@ -6,7 +6,7 @@ use freedesktop_desktop_entry::DesktopEntry;
 use futures::StreamExt;
 use iced::{
     keyboard::{key::Named, Key},
-    widget::{scrollable::AbsoluteOffset, text_input, Column, Row, TextInput},
+    widget::{scrollable::AbsoluteOffset, text_input, Column, MouseArea, Row, TextInput},
     Element, Font, Length,
 };
 use itertools::Itertools;
@@ -238,6 +238,12 @@ impl App {
                 self.app_list_viewport = Some(viewport);
                 iced::Task::none()
             }
+            AppMessage::Select(index) => {
+                self.selection = index;
+                self.scroll_app_list_to_selection()
+            }
+            AppMessage::SelectAndLaunch(index) => iced::Task::done(AppMessage::Select(index))
+                .chain(iced::Task::done(AppMessage::Launch)),
         }
     }
 
@@ -319,6 +325,10 @@ impl App {
                                     })
                                     .into();
                             }
+                            row = MouseArea::new(row)
+                                .on_enter(AppMessage::Select(i))
+                                .on_press(AppMessage::SelectAndLaunch(i))
+                                .into();
                             (suggestion.index, row)
                         },
                     ))
@@ -390,6 +400,8 @@ enum AppMessage {
     NextSuggestion,
     Launch,
     AppListScrolled(iced::widget::scrollable::Viewport),
+    Select(usize),
+    SelectAndLaunch(usize),
 }
 
 #[derive(Clone, Debug, Deserialize)]
