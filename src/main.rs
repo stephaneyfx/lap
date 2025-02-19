@@ -5,10 +5,9 @@ use clap::{parser::ValueSource, ArgAction, ArgMatches, CommandFactory, FromArgMa
 use freedesktop_desktop_entry::DesktopEntry;
 use futures::StreamExt;
 use iced::{
-    font::Family,
     keyboard::{key::Named, Key},
     widget::{text_input, Column, Row, TextInput},
-    Application, Element, Font, Length,
+    Element, Font, Length,
 };
 use itertools::Itertools;
 use notify_rust::Notification;
@@ -98,15 +97,8 @@ impl App {
         self.suggestions = matches;
         self.selection = 0;
     }
-}
 
-impl Application for App {
-    type Executor = iced::executor::Default;
-    type Message = AppMessage;
-    type Theme = iced::Theme;
-    type Flags = AppSettings;
-
-    fn new(app_settings: AppSettings) -> (Self, iced::Command<Self::Message>) {
+    fn new(app_settings: AppSettings) -> (Self, iced::Task<AppMessage>) {
         let (send_candidate, receive_candidate) = mpsc::channel(100);
         drop(spawn_blocking(|| find_all_candidates(send_candidate)));
         let (send_icon_name, receive_icon_name) = mpsc::channel(100);
@@ -134,8 +126,8 @@ impl Application for App {
                 selection: 0,
                 settings: app_settings,
             },
-            iced::Command::batch([
-                iced::Command::run(
+            iced::Task::batch([
+                iced::Task::run(
                     ReceiverStream::new(receive_candidate)
                         .map(AppMessage::Candidate)
                         .chain(futures::stream::once(ready(
@@ -143,7 +135,7 @@ impl Application for App {
                         ))),
                     identity,
                 ),
-                iced::Command::run(ReceiverStream::new(receive_icon), |(name, icon)| {
+                iced::Task::run(ReceiverStream::new(receive_icon), |(name, icon)| {
                     AppMessage::Icon { name, icon }
                 }),
                 iced::widget::text_input::focus(search_pattern_id),
@@ -155,14 +147,14 @@ impl Application for App {
         APP_NAME.into()
     }
 
-    fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
+    fn update(&mut self, message: AppMessage) -> iced::Task<AppMessage> {
         match message {
             AppMessage::SearchPatternUpdated(s) => {
                 self.search_pattern = s;
                 self.update_results();
-                iced::Command::none()
+                iced::Task::none()
             }
-            AppMessage::Quit => iced::window::close(iced::window::Id::MAIN),
+            AppMessage::Quit => iced::window::get_latest().and_then(iced::window::close),
             AppMessage::Candidate(candidate) => {
                 let icon = candidate.icon.clone();
                 match self
@@ -171,39 +163,39 @@ impl Application for App {
                     .find(|c| c.id == candidate.id)
                 {
                     Some(c) if c.priority < candidate.priority => *c = candidate,
-                    Some(_) => return iced::Command::none(),
+                    Some(_) => return iced::Task::none(),
                     None => {
                         self.all_candidates.push(candidate);
                     }
                 }
                 self.update_results();
                 let Some((request_icon, icon)) = self.request_icon.clone().zip(icon) else {
-                    return iced::Command::none();
+                    return iced::Task::none();
                 };
                 let hash_map::Entry::Vacant(entry) = self.icons.entry(icon) else {
-                    return iced::Command::none();
+                    return iced::Task::none();
                 };
                 let name = entry.key().clone();
                 entry.insert(None);
-                iced::Command::perform(async move { request_icon.send(name).await }, |_| {
+                iced::Task::perform(async move { request_icon.send(name).await }, |_| {
                     AppMessage::Ignore
                 })
             }
             AppMessage::AllCandidatesFetched => {
                 self.request_icon = None;
-                iced::Command::none()
+                iced::Task::none()
             }
             AppMessage::Icon { name, icon } => {
                 self.icons.insert(name, Some(icon));
-                iced::Command::none()
+                iced::Task::none()
             }
-            AppMessage::Ignore => iced::Command::none(),
+            AppMessage::Ignore => iced::Task::none(),
             AppMessage::PrevSuggestion => {
                 self.selection = self
                     .selection
                     .checked_sub(1)
                     .unwrap_or_else(|| self.suggestions.len().saturating_sub(1));
-                iced::Command::none()
+                iced::Task::none()
             }
             AppMessage::NextSuggestion => {
                 self.selection = self
@@ -211,7 +203,7 @@ impl Application for App {
                     .checked_add(1)
                     .and_then(|i| i.checked_rem(self.suggestions.len()))
                     .unwrap_or(0);
-                iced::Command::none()
+                iced::Task::none()
             }
             AppMessage::Launch => {
                 if let Some(command_options) = self
@@ -235,12 +227,12 @@ impl Application for App {
                         }
                     }
                 }
-                iced::window::close(iced::window::Id::MAIN)
+                iced::window::get_latest().and_then(iced::window::close)
             }
         }
     }
 
-    fn view(&self) -> iced::Element<'_, Self::Message, Self::Theme, iced::Renderer> {
+    fn view(&self) -> iced::Element<'_, AppMessage, iced::Theme, iced::Renderer> {
         Element::new(Column::with_children([
             Element::new(
                 TextInput::new("App to search for", &self.search_pattern)
@@ -282,7 +274,7 @@ impl Application for App {
                                         Element::new(iced::widget::Space::with_width(10)),
                                         Element::new(
                                             iced::widget::text(k)
-                                                .style(iced::Color::from_rgb(0.5, 0.5, 0.5)),
+                                                .color(iced::Color::from_rgb(0.5, 0.5, 0.5)),
                                         ),
                                     ]
                                 })
@@ -296,17 +288,18 @@ impl Application for App {
                                 .extend([Element::new(iced::widget::Space::with_width(
                                     iced::Length::Fill,
                                 ))])
-                                .align_items(iced::Alignment::Center)
+                                .align_y(iced::Alignment::Center)
                                 .spacing(5),
                             );
                             if self.selection == i {
                                 row = iced::widget::container(row)
-                                    .style(
-                                        iced::widget::container::Appearance::default()
-                                            .with_background(iced::Background::Color(
-                                                iced::Color::from_rgb(0.18, 0.31, 0.31),
+                                    .style(|_| {
+                                        iced::widget::container::background(
+                                            iced::Background::Color(iced::Color::from_rgb(
+                                                0.18, 0.31, 0.31,
                                             )),
-                                    )
+                                        )
+                                    })
                                     .into();
                             }
                             (suggestion.index, row)
@@ -323,11 +316,11 @@ impl Application for App {
         ]))
     }
 
-    fn theme(&self) -> Self::Theme {
+    fn theme(&self) -> iced::Theme {
         iced::Theme::Dark
     }
 
-    fn subscription(&self) -> iced::Subscription<Self::Message> {
+    fn subscription(&self) -> iced::Subscription<AppMessage> {
         iced::keyboard::on_key_press(|key, _| match key {
             Key::Named(Named::Escape) => Some(AppMessage::Quit),
             Key::Named(Named::ArrowDown) => Some(AppMessage::NextSuggestion),
@@ -531,12 +524,14 @@ fn main() -> iced::Result {
     if !uses_default(&raw_args, "max_distance") {
         app_settings.max_distance = StrDistance(args.max_distance);
     }
-    let mut settings = iced::Settings::with_flags(app_settings);
-    if let Some(font) = &settings.flags.font {
-        settings.default_font.family = Family::Name(FONT.get_or_init(|| font.clone()));
+    let mut app = iced::application(App::title, App::update, App::view)
+        .resizable(app_settings.resizable)
+        .theme(App::theme)
+        .subscription(App::subscription);
+    if let Some(font) = &app_settings.font {
+        app = app.default_font(Font::with_name(FONT.get_or_init(|| font.clone())));
     }
-    settings.window.resizable = settings.flags.resizable;
-    App::run(settings)
+    app.run_with(|| App::new(app_settings))
 }
 
 fn uses_default(raw_args: &ArgMatches, name: &str) -> bool {
@@ -565,29 +560,28 @@ impl Candidate {
     where
         P: AsRef<Path>,
     {
-        let path = path.as_ref();
-        let contents = fs::read_to_string(path)?;
-        let entry = DesktopEntry::decode(path, &contents)?;
+        let entry = DesktopEntry::from_path::<&str>(path.as_ref(), None)?;
         let name = entry
-            .name(None)
+            .name::<&str>(&[])
             .ok_or(DesktopEntryError::NoName)?
             .into_owned();
         let command = entry.exec().ok_or(DesktopEntryError::NoCommand)?.parse()?;
         Ok(Candidate {
             id: entry.id().into(),
             name,
-            keywords: [
-                entry.generic_name(None).as_ref(),
-                entry.keywords().as_ref(),
-                entry.categories().map(Cow::Borrowed).as_ref(),
-            ]
-            .into_iter()
-            .flatten()
-            .flat_map(|s| s.split(';'))
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned)
-            .collect(),
+            keywords: entry
+                .generic_name::<&str>(&[])
+                .into_iter()
+                .chain(entry.keywords::<&str>(&[]).unwrap_or_default().into_iter())
+                .chain(
+                    entry
+                        .categories()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(Cow::Borrowed),
+                )
+                .map(Cow::into_owned)
+                .collect(),
             command,
             priority,
             icon: entry.icon().map(ToOwned::to_owned),
@@ -737,14 +731,14 @@ fn find_icon(
             None
         }
     }?;
-    Some(iced::widget::image::Handle::from_pixels(
+    Some(iced::widget::image::Handle::from_rgba(
         icon_size, icon_size, pixels,
     ))
 }
 
 fn load_svg_icon(path: &Path, size: u32) -> Result<Vec<u8>, LoadIconError> {
     let svg_bytes = fs::read(path)?;
-    let svg = usvg::Tree::from_data(&svg_bytes, &Default::default(), &Default::default())?;
+    let svg = usvg::Tree::from_data(&svg_bytes, &Default::default())?;
     let transform = icon_transform(svg.size().width(), svg.size().height(), size as f32);
     let mut pixmap = tiny_skia::Pixmap::new(size, size).ok_or(LoadIconError::OpenSkiaPixmap)?;
     resvg::render(&svg, transform, &mut pixmap.as_mut());

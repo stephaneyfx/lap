@@ -10,24 +10,24 @@ repository = "https://github.com/stephaneyfx/lap.git"
 keywords = ["application", "launcher"]
 
 [dependencies]
-anstyle = "1.0.7"
-clap = { version = "4.5.4", features = ["derive"] }
-dirs = "5.0.1"
-freedesktop-desktop-entry = "0.5.2"
-freedesktop-icons = "0.2.6"
-futures = "0.3.30"
-iced = { version = "0.12.1", features = ["advanced", "image", "tokio"] }
-image = "0.25.1"
-itertools = "0.13.0"
-notify-rust = "4.11.0"
-resvg = "0.41.0"
-serde = { version = "1.0.200", features = ["derive"] }
+anstyle = "1.0.10"
+clap = { version = "4.5.30", features = ["derive"] }
+dirs = "6.0.0"
+freedesktop-desktop-entry = "0.7.7"
+freedesktop-icons = "0.3.1"
+futures = "0.3.31"
+iced = { version = "0.13.1", features = ["advanced", "image", "tokio"] }
+image = "0.25.5"
+itertools = "0.14.0"
+notify-rust = "4.11.5"
+resvg = "0.44.0"
+serde = { version = "1.0.217", features = ["derive"] }
 serde_ignored = "0.1.10"
 strsim = "0.11.1"
-thiserror = "1.0.59"
-tokio = { version = "1.37.0", features = ["rt-multi-thread", "sync"] }
-tokio-stream = "0.1.15"
-toml = "0.8.12"
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+thiserror = "2.0.11"
+tokio = { version = "1.43.0", features = ["rt-multi-thread", "sync"] }
+tokio-stream = "0.1.17"
+toml = "0.8.20"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 walkdir = "2.5.0"
