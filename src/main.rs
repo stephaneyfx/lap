@@ -1,7 +1,9 @@
 // Copyright (c) 2024 Stephane Raux. Distributed under the 0BSD license.
 
 use anstyle::AnsiColor;
-use clap::{parser::ValueSource, ArgAction, ArgMatches, CommandFactory, FromArgMatches, Parser};
+use clap::{
+    parser::ValueSource, ArgAction, ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand,
+};
 use freedesktop_desktop_entry::DesktopEntry;
 use futures::StreamExt;
 use iced::{
@@ -20,6 +22,7 @@ use std::{
     convert::identity,
     env::VarError,
     ffi::OsStr,
+    fmt::{self, Display},
     fs,
     future::ready,
     io,
@@ -346,7 +349,7 @@ impl App {
     }
 
     fn theme(&self) -> iced::Theme {
-        iced::Theme::Dark
+        self.settings.theme.0.clone()
     }
 
     fn subscription(&self) -> iced::Subscription<AppMessage> {
@@ -404,6 +407,51 @@ enum AppMessage {
     SelectAndLaunch(usize),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct Theme(iced::Theme);
+
+impl Theme {
+    fn all() -> impl Iterator<Item = Self> {
+        iced::Theme::ALL.iter().cloned().map(Self)
+    }
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self(iced::Theme::Dark)
+    }
+}
+
+impl Display for Theme {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for Theme {
+    type Err = UnknownTheme;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        iced::Theme::ALL
+            .iter()
+            .find(|theme| theme.to_string() == s)
+            .cloned()
+            .map(Self)
+            .ok_or_else(|| UnknownTheme(s.into()))
+    }
+}
+
+impl<'de> Deserialize<'de> for Theme {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct AppSettings {
@@ -417,6 +465,8 @@ struct AppSettings {
     icon_size: u32,
     #[serde(default = "default_max_distance")]
     max_distance: StrDistance,
+    #[serde(default)]
+    theme: Theme,
 }
 
 impl AppSettings {
@@ -443,6 +493,7 @@ impl Default for AppSettings {
             icon_theme: None,
             icon_size: DEFAULT_ICON_SIZE,
             max_distance: default_max_distance(),
+            theme: Default::default(),
         }
     }
 }
@@ -478,6 +529,10 @@ const fn default_icon_size() -> u32 {
 const fn default_resizable() -> bool {
     DEFAULT_RESIZABLE
 }
+
+#[derive(Debug, Error)]
+#[error("Unknown theme \"{0}\"")]
+struct UnknownTheme(String);
 
 fn terminal_styles() -> clap::builder::Styles {
     clap::builder::Styles::styled()
@@ -524,6 +579,19 @@ struct AppArgs {
     /// Suggestions with a greater distance are filtered out. The distance is in [0, 1].
     #[arg(long, default_value_t = DEFAULT_MAX_DISTANCE)]
     max_distance: f64,
+    /// GUI themes
+    ///
+    /// The `list-themes` subcommand lists available themes.
+    #[arg(long, default_value_t)]
+    theme: Theme,
+    #[command(subcommand)]
+    subcommand: Option<AppSubcommand>,
+}
+
+#[derive(Debug, Subcommand)]
+enum AppSubcommand {
+    /// List available themes
+    ListThemes,
 }
 
 fn main() -> iced::Result {
@@ -532,6 +600,10 @@ fn main() -> iced::Result {
         Ok(args) => args,
         Err(e) => e.exit(),
     };
+    if let Some(AppSubcommand::ListThemes) = args.subcommand {
+        Theme::all().for_each(|theme| println!("{theme}"));
+        return Ok(());
+    }
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_ansi(true)
@@ -580,6 +652,9 @@ fn main() -> iced::Result {
     }
     if !uses_default(&raw_args, "max_distance") {
         app_settings.max_distance = StrDistance(args.max_distance);
+    }
+    if !uses_default(&raw_args, "theme") {
+        app_settings.theme = args.theme;
     }
     let mut app = iced::application(App::title, App::update, App::view)
         .resizable(app_settings.resizable)

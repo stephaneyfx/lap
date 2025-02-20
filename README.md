@@ -41,6 +41,11 @@ icon-size = 16
 # are filtered out. The distance is in [0, 1].
 # Default: 0.4
 max-distance = 0.4
+
+# GUI theme
+# The `list-themes` subcommand lists available themes.
+# Default: "Dark"
+theme = "Dark"
 ```
 
 # Contribute
