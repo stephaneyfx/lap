@@ -8,6 +8,8 @@ This scans for XDG desktop files and opens up a searchable list to launch the de
 
 Wayland is supported. X11 should work too, though this has not been tested.
 
+![screenshot](assets/screenshot.png)
+
 # Usage
 When the GUI has focus, the following controls are available:
 - `Enter`: Launch selected app.
