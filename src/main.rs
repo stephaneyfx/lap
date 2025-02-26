@@ -241,12 +241,11 @@ impl App {
                 self.app_list_viewport = Some(viewport);
                 iced::Task::none()
             }
-            AppMessage::Select(index) => {
+            AppMessage::SelectAndLaunch(index) => {
                 self.selection = index;
                 self.scroll_app_list_to_selection()
+                    .chain(iced::Task::done(AppMessage::Launch))
             }
-            AppMessage::SelectAndLaunch(index) => iced::Task::done(AppMessage::Select(index))
-                .chain(iced::Task::done(AppMessage::Launch)),
         }
     }
 
@@ -329,7 +328,6 @@ impl App {
                                     .into();
                             }
                             row = MouseArea::new(row)
-                                .on_enter(AppMessage::Select(i))
                                 .on_press(AppMessage::SelectAndLaunch(i))
                                 .into();
                             (suggestion.index, row)
@@ -403,7 +401,6 @@ enum AppMessage {
     NextSuggestion,
     Launch,
     AppListScrolled(iced::widget::scrollable::Viewport),
-    Select(usize),
     SelectAndLaunch(usize),
 }
 
