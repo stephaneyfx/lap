@@ -361,13 +361,13 @@ impl App {
     }
 
     fn scroll_app_list_to_selection(&self) -> iced::Task<AppMessage> {
-        if self.all_candidates.is_empty() {
+        if self.suggestions.is_empty() {
             return iced::Task::none();
         }
         let Some(viewport) = self.app_list_viewport.as_ref() else {
             return iced::Task::none();
         };
-        let row_count = self.all_candidates.len();
+        let row_count = self.suggestions.len();
         let row_height = (viewport.content_bounds().height
             - (row_count - 1) as f32 * APP_LIST_SPACING)
             / row_count as f32;
