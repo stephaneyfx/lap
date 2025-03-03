@@ -689,7 +689,7 @@ impl Candidate {
     where
         P: AsRef<Path>,
     {
-        let entry = DesktopEntry::from_path::<&str>(path.as_ref(), None)?;
+        let entry = DesktopEntry::from_path::<&str>(path.as_ref(), Some(&[]))?;
         let name = entry
             .name::<&str>(&[])
             .ok_or(DesktopEntryError::NoName)?
